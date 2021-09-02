@@ -2,8 +2,17 @@ package cos418_hw1_1
 
 import (
 	"fmt"
+	"os"
+	"regexp"
 	"sort"
+	"strings"
 )
+
+func check(e error) {
+	if e != nil {
+		panic(e)
+	}
+}
 
 // Find the top K most common words in a text document.
 // 	path: location of the document
@@ -15,16 +24,49 @@ import (
 // are removed, e.g. "don't" becomes "dont".
 // You should use `checkError` to handle potential errors.
 func topWords(path string, numWords int, charThreshold int) []WordCount {
-	// TODO: implement me
+	rawContent, err := os.ReadFile(path)
+	check(err)
+	//fmt.Print(string(rawContent))
+	strContent := string(rawContent)
 	// HINT: You may find the `strings.Fields` and `strings.ToLower` functions helpful
-	// HINT: To keep only alphanumeric characters, use the regex "[^0-9a-zA-Z]+"
-	return nil
+	strContentArray := strings.Fields(strings.ToLower(strContent))
+	wordCountArr := countWords(strContentArray, numWords, charThreshold)
+	//fmt.Print(wordCountArr)
+
+	return wordCountArr
 }
 
 // A struct that represents how many times a word is observed in a document
 type WordCount struct {
 	Word  string
 	Count int
+}
+
+func countWords(slice []string, numWords int, charThreshold int) []WordCount {
+	keys := make(map[string]int)
+	list := []WordCount{}
+	// HINT: To keep only alphanumeric characters, use the regex "[^0-9a-zA-Z]+"
+	regexp := regexp.MustCompile(`[^0-9a-zA-Z]+`)
+
+	for _, entry := range slice {
+		entry := regexp.ReplaceAllString(entry, "")
+		if len(entry) < charThreshold {
+			continue
+		}
+		if _, value := keys[entry]; !value {
+			keys[entry] = 1
+		} else {
+			keys[entry]++
+		}
+	}
+
+	for key, value := range keys {
+		list = append(list, WordCount{Word: key, Count: value})
+	}
+
+	sortWordCounts(list)
+	list = append([]WordCount(nil), list[:numWords]...)
+	return list
 }
 
 func (wc WordCount) String() string {
