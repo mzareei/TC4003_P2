@@ -37,23 +37,22 @@ func sum(num int, fileName string) int {
 	check(err)
 	// fmt.Print(elements)
 	// HINT: used buffered channels for splitting numbers between workers
-	//nums := make(chan int, len(elements)) // input all numbers to this channel
-	out := make(chan int, 1) // output the total sum from this channel
+	out := make(chan int, 1)
 	index := 0
+	elementsSize := len(elements)
 	for i := 0; i < num; i++ {
-		var numbersPerChannel = len(elements) / num // number of numbers to get from the input channel
+		var numbersPerChannel = elementsSize / num
 		if i == num-1 {
-			numbersPerChannel += len(elements) % num // fix remainder for the last go routine
+			numbersPerChannel += elementsSize % num
 		}
 		nums := make(chan int, numbersPerChannel)
-		for j := 0; j < numbersPerChannel && index < len(elements); j++ {
+		for j := 0; j < numbersPerChannel && index < elementsSize; j++ {
 			nums <- elements[index]
 			index++
 		}
 		go sumWorker(nums, out)
 		suma += <-out
 	}
-
 	// fmt.Println(suma)
 	return suma
 }
