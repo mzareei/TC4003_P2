@@ -3,15 +3,23 @@ package cos418_hw1_1
 import (
 	"bufio"
 	"io"
+	"os"
 	"strconv"
+	"strings"
 )
 
 // Sum numbers from channel `nums` and output sum to `out`.
 // You should only output to `out` once.
 // Do NOT modify function signature.
 func sumWorker(nums chan int, out chan int) {
-	// TODO: implement me
 	// HINT: use for loop over `nums`
+	sum := 0
+	lenNums := len(nums)
+	for i := 0; i < lenNums; i++ {
+		sum += <-nums
+	}
+	out <- sum
+
 }
 
 // Read integers from the file `fileName` and return sum of all values.
@@ -20,10 +28,34 @@ func sumWorker(nums chan int, out chan int) {
 // You should use `checkError` to handle potential errors.
 // Do NOT modify function signature.
 func sum(num int, fileName string) int {
-	// TODO: implement me
 	// HINT: use `readInts` and `sumWorkers`
+	rawContent, err := os.ReadFile(fileName)
+	check(err)
+	strContent := string(rawContent)
+	elements, err := readInts(strings.NewReader(strContent))
+	suma := 0
+	check(err)
+	// fmt.Print(elements)
 	// HINT: used buffered channels for splitting numbers between workers
-	return 0
+	//nums := make(chan int, len(elements)) // input all numbers to this channel
+	out := make(chan int, 1) // output the total sum from this channel
+	index := 0
+	for i := 0; i < num; i++ {
+		var numbersPerChannel = len(elements) / num // number of numbers to get from the input channel
+		if i == num-1 {
+			numbersPerChannel += len(elements) % num // fix remainder for the last go routine
+		}
+		nums := make(chan int, numbersPerChannel)
+		for j := 0; j < numbersPerChannel && index < len(elements); j++ {
+			nums <- elements[index]
+			index++
+		}
+		go sumWorker(nums, out)
+		suma += <-out
+	}
+
+	// fmt.Println(suma)
+	return suma
 }
 
 // Read a list of integers separated by whitespace from `r`.
