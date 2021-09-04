@@ -1,8 +1,77 @@
 package mapreduce
 
 import (
+	"encoding/json"
 	"hash/fnv"
+	"log"
+	"os"
 )
+
+
+
+// Gets file information from current opened file
+// if an error occurs the error is logged to log output file/console
+func getFileInfo(inputFile *os.File) os.FileInfo {
+	fileInfo, err := inputFile.Stat()
+
+	if err != nil {
+		log.Fatal("doMap: error on getstat: ", err)
+	}
+
+	return fileInfo
+}
+
+// Will read and return all the file contents
+// if an error occurs the error is logged to log output file/console
+func readFileContents(inputFile *os.File) []byte {
+	fileContents := make([]byte, getFileInfo(inputFile).Size())
+
+	_, err := inputFile.Read(fileContents)
+	if err != nil {
+		log.Fatal("doMap: error reading file: ", err)
+	}
+
+	return fileContents
+}
+
+func mapLoop(
+	jobName string,
+	mapTaskNumber int,
+	keyValues []KeyValue,
+	nReduce int,
+) {
+	for reduceTask := 0; reduceTask < nReduce; reduceTask++ {
+		reduceFile := createFile(reduceName(jobName, mapTaskNumber, reduceTask))
+
+		encodeValuesFromReduceTask(reduceFile, keyValues, nReduce, reduceTask)
+
+		reduceFile.Close()
+	}
+}
+
+func encodeValuesFromReduceTask(
+	reduceFile *os.File,
+	keyValues []KeyValue,
+	nReduce int,
+	currentReduceTask int,
+) {
+	enc := json.NewEncoder(reduceFile)
+
+	for _, kv := range keyValues {
+		keyHash := int(ihash(kv.Key))
+		if keyHash % nReduce == currentReduceTask {
+			encodeValue(enc, &kv)
+		}
+	}
+}
+
+func encodeValue(enc *json.Encoder, kv *KeyValue) {
+	err := enc.Encode(kv)
+
+	if err != nil {
+		log.Fatal("doMap: json encode error: ", err)
+	}
+}
 
 // doMap does the job of a map worker: it reads one of the input files
 // (inFile), calls the user-defined map function (mapF) for that file's
@@ -14,33 +83,15 @@ func doMap(
 	nReduce int, // the number of reduce task that will be run ("R" in the paper)
 	mapF func(file string, contents string) []KeyValue,
 ) {
-	// TODO:
-	// You will need to write this function.
-	// You can find the filename for this map task's input to reduce task number
-	// r using reduceName(jobName, mapTaskNumber, r). The ihash function (given
-	// below doMap) should be used to decide which file a given key belongs into.
-	//
-	// The intermediate output of a map task is stored in the file
-	// system as multiple files whose name indicates which map task produced
-	// them, as well as which reduce task they are for. Coming up with a
-	// scheme for how to store the key/value pairs on disk can be tricky,
-	// especially when taking into account that both keys and values could
-	// contain newlines, quotes, and any other character you can think of.
-	//
-	// One format often used for serializing data to a byte stream that the
-	// other end can correctly reconstruct is JSON. You are not required to
-	// use JSON, but as the output of the reduce tasks *must* be JSON,
-	// familiarizing yourself with it here may prove useful. You can write
-	// out a data structure as a JSON string to a file using the commented
-	// code below. The corresponding decoding functions can be found in
-	// common_reduce.go.
-	//
-	//   enc := json.NewEncoder(file)
-	//   for _, kv := ... {
-	//     err := enc.Encode(&kv)
-	//
-	// Remember to close the file after you have written all the values!
-	// Use checkError to handle errors.
+	file := openFile(inFile)
+
+	keyValues := mapF(inFile, string(readFileContents(file)))
+	mapLoop(jobName, mapTaskNumber, keyValues, nReduce)
+
+	err := file.Close()
+	if err != nil {
+		log.Fatal("doMap: error closing file: ", err)
+	}
 }
 
 func ihash(s string) uint32 {

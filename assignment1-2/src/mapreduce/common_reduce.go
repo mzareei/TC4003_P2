@@ -1,5 +1,59 @@
 package mapreduce
 
+import (
+	"encoding/json"
+	"log"
+	"os"
+)
+
+func findKeysInFile(jobName string, reduceTaskNumber int, nMap int, intermediate map[string][]string) {
+	for i := 0; i < nMap; i++ {
+		file := openFile(reduceName(jobName, i, reduceTaskNumber))
+
+		decodeFile(file, intermediate)
+
+		file.Close()
+	}
+}
+
+func decodeFile(file *os.File, intermediate map[string][]string) {
+	dec := json.NewDecoder(file)
+
+	for dec.More() {
+		pair := decodePair(dec)
+
+		intermediate[pair.Key] = append(intermediate[pair.Key], pair.Value)
+	}
+}
+
+func decodePair(dec *json.Decoder) KeyValue {
+	var pair KeyValue
+	err := dec.Decode(&pair)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return pair
+}
+
+func reduceEncode(
+	merge *os.File,
+	intermediate map[string][]string,
+	reduceF func(key string, values []string) string,
+) {
+	enc := json.NewEncoder(merge)
+
+	for k, v := range intermediate {
+		kvReduced := KeyValue{k, reduceF(k, v)}
+
+		err := enc.Encode(kvReduced)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
 // doReduce does the job of a reduce worker: it reads the intermediate
 // key/value pairs (produced by the map phase) for this task, sorts the
 // intermediate key/value pairs by key, calls the user-defined reduce function
@@ -10,27 +64,14 @@ func doReduce(
 	nMap int, // the number of map tasks that were run ("M" in the paper)
 	reduceF func(key string, values []string) string,
 ) {
-	// TODO:
-	// You will need to write this function.
-	// You can find the intermediate file for this reduce task from map task number
-	// m using reduceName(jobName, m, reduceTaskNumber).
-	// Remember that you've encoded the values in the intermediate files, so you
-	// will need to decode them. If you chose to use JSON, you can read out
-	// multiple decoded values by creating a decoder, and then repeatedly calling
-	// .Decode() on it until Decode() returns an error.
-	//
-	// You should write the reduced output in as JSON encoded KeyValue
-	// objects to a file named mergeName(jobName, reduceTaskNumber). We require
-	// you to use JSON here because that is what the merger than combines the
-	// output from all the reduce tasks expects. There is nothing "special" about
-	// JSON -- it is just the marshalling format we chose to use. It will look
-	// something like this:
-	//
-	// enc := json.NewEncoder(mergeFile)
-	// for key in ... {
-	// 	enc.Encode(KeyValue{key, reduceF(...)})
-	// }
-	// file.Close()
-	//
-	// Use checkError to handle errors.
+	intermediate := make(map[string][]string) //map to save intermediate key value pairs.
+
+	findKeysInFile(jobName, reduceTaskNumber, nMap, intermediate)
+	merge := createFile(mergeName(jobName, reduceTaskNumber))
+	reduceEncode(merge, intermediate, reduceF)
+
+	err := merge.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
 }

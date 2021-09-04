@@ -3,6 +3,7 @@ package mapreduce
 import (
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 )
 
@@ -48,4 +49,28 @@ func reduceName(jobName string, mapTask int, reduceTask int) string {
 // mergeName constructs the name of the output file of reduce task <reduceTask>
 func mergeName(jobName string, reduceTask int) string {
 	return "mrtmp." + jobName + "-res-" + strconv.Itoa(reduceTask)
+}
+
+// Creates a file with the specified filename
+// if an error occurs the error is logged to log output file/console
+func createFile(fileName string) *os.File {
+	file, err := os.Create(fileName)
+
+	if err != nil {
+		log.Fatal("doMap: error creating file: ", err)
+	}
+
+	return file
+}
+
+// Opens the file specified in the fileName argument
+// if an error occurs the error is logged to log output file/console
+func openFile(fileName string) *os.File {
+	file, err := os.Open(fileName)
+
+	if err != nil {
+		log.Fatal("doMap: error opening file: ", err)
+	}
+
+	return file
 }
