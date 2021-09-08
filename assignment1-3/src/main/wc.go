@@ -10,12 +10,6 @@ import (
 	"unicode"
 )
 
-// This function will evaluate whether the c argument is a unicode letter
-// and return true if it matches a valid letter
-func isValueALetter(c rune) bool {
-	return !unicode.IsLetter(c)
-}
-
 // The mapping function is called once for each piece of the input.
 // In this framework, the key is the name of the file that is being processed,
 // and the value is the file's contents. The return value should be a slice of
@@ -23,7 +17,7 @@ func isValueALetter(c rune) bool {
 func mapF(document string, value string) (res []mapreduce.KeyValue) {
 	var keyValues []mapreduce.KeyValue
 
-	words := strings.FieldsFunc(value, isValueALetter)
+	words := strings.FieldsFunc(value, mapreduce.isValueALetter)
 	for _, word := range words {
 		keyValues = append(keyValues, mapreduce.KeyValue{word, "1"})
 	}

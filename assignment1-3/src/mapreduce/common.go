@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"unicode"
 )
 
 // Debugging enabled?
@@ -73,4 +74,10 @@ func openFile(fileName string) *os.File {
 	}
 
 	return file
+}
+
+// This function will evaluate whether the c argument is a unicode letter
+// and return true if it matches a valid letter
+func isValueALetter(c rune) bool {
+	return !unicode.IsLetter(c)
 }
