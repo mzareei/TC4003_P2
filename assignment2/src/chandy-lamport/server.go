@@ -92,38 +92,48 @@ func (server *Server) HandlePacket(src string, message interface{}) {
 	// TODO: IMPLEMENT ME
 	switch msg := message.(type) {
 	case TokenMessage:
-		// We have to add the received tokens to the counter
-		server.Tokens += msg.numTokens
-		ids := make([]int, 0)
-
-		server.localSnapshot.Range(func(key, value interface{}) bool {
-			snapShotId := key.(int)
-			if !server.markerReceived[snapShotId][src] { // If haven't received marker from src for that snapshots
-				ids = append(ids, snapShotId) // Then add the snapshot id to the id's slice
-			}
-			return true
-
-		})
-
-		message := &SnapshotMessage{src, server.Id, msg} // Create a new message struct
-
-		for _, id := range ids {
-			tempSnap, _ := server.localSnapshot.Load(id)
-			snap := tempSnap.(SnapshotState)
-			snap.messages = append(snap.messages, message) //Adding the new message to the snapshot
-			server.localSnapshot.Store(id, snap)
-		}
+		server.HandleTokenMessage(msg, src)
 	case MarkerMessage:
-		_, ok := server.localSnapshot.Load(msg.snapshotId) // Read the local snapshot if exists
-		if !ok {
-			server.StartSnapshot(msg.snapshotId) // If not exists the start it
-		}
-		server.markerReceived[msg.snapshotId][src] = true // Marker received from source, so set flag to true
+		server.HandleMarkerMessage(msg, src)
+	}
+}
 
-		if len(server.markerReceived[msg.snapshotId]) == len(server.inboundLinks) { // When received a marker from all the inbound links
-			server.sim.NotifySnapshotComplete(server.Id, msg.snapshotId) // Notify to the simulator
-		}
+func (server *Server) HandleTokenMessage(msg TokenMessage, src string) {
+	// We have to add the received tokens to the counter
+	server.Tokens += msg.numTokens
+	ids := make([]int, 0)
 
+	server.localSnapshot.Range(func(key, value interface{}) bool {
+		snapShotId := key.(int)
+		if !server.markerReceived[snapShotId][src] { // If haven't received marker from src for that snapshots
+			ids = append(ids, snapShotId) // Then add the snapshot id to the id's slice
+		}
+		return true
+	})
+
+	server.CreateSnapshot(msg, src, ids)
+}
+
+func (server *Server) CreateSnapshot(msg TokenMessage, src string, ids []int) {
+	message := &SnapshotMessage{src, server.Id, msg} // Create a new message struct
+
+	for _, id := range ids {
+		tempSnap, _ := server.localSnapshot.Load(id)
+		snap := tempSnap.(SnapshotState)
+		snap.messages = append(snap.messages, message) //Adding the new message to the snapshot
+		server.localSnapshot.Store(id, snap)
+	}
+}
+
+func (server *Server) HandleMarkerMessage(msg MarkerMessage, src string) {
+	_, ok := server.localSnapshot.Load(msg.snapshotId) // Read the local snapshot if exists
+	if !ok {
+		server.StartSnapshot(msg.snapshotId) // If not exists the start it
+	}
+	server.markerReceived[msg.snapshotId][src] = true // Marker received from source, so set flag to true
+
+	if len(server.markerReceived[msg.snapshotId]) == len(server.inboundLinks) { // When received a marker from all the inbound links
+		server.sim.NotifySnapshotComplete(server.Id, msg.snapshotId) // Notify to the simulator
 	}
 }
 
