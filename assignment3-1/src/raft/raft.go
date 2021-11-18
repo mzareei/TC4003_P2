@@ -16,8 +16,6 @@ import (
 type RequestVoteArgs struct {
 	Term         int
 	CandidateID  string
-	LastLogIndex int
-	LastLogTerm  int
 }
 
 //
@@ -87,22 +85,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.Lock()
 	defer rf.Unlock()
 
-	lastIndex, lastTerm := rf.getLastEntryInfo()
-
-	// Check if candidate log is at least up-to-date as receiver's log
-	logUpToDate := func() bool {
-		if lastTerm == args.LastLogTerm {
-			return lastIndex <= args.LastLogIndex
-		}
-		return lastTerm < args.LastLogTerm
-	}()
-
 	reply.Term = rf.currentTerm
 	reply.Id = rf.id
 
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
-	} else if args.Term >= rf.currentTerm && logUpToDate {
+	} else if args.Term >= rf.currentTerm /*&& logUpToDate */{
 		rf.setAsFollower(args.Term)
 		rf.votedFor = args.CandidateID
 		reply.VoteGranted = true
@@ -128,76 +116,6 @@ func (rf *Raft) AppendEntries(appendEntriesArgs *AppendEntriesArgs, appendEntrie
 	rf.leaderID = appendEntriesArgs.LeaderID
 	rf.lastHeartBeat = time.Now()
 
-	prevLogIndex := -1
-	for i, v := range rf.log {
-		if v.Index == appendEntriesArgs.PreviousLogIndex {
-			if v.Term == appendEntriesArgs.PreviousLogTerm {
-				prevLogIndex = i
-				break
-			} else {
-				appendEntriesReply.ConflictEntry = v.Term
-			}
-		}
-	}
-
-	// It means that there is a match in peer and leader for prevLogIndex and prevLogTerm
-	if prevLogIndex >= 0 || (appendEntriesArgs.PreviousLogIndex == 0 && appendEntriesArgs.PreviousLogTerm == 0) {
-		entriesIndex := 0
-
-		// Iterate over peer's log to find out discrepancies with leader and delete them
-		for i := prevLogIndex + 1; i < len(rf.log); i++ {
-			isConsistent := func() bool {
-				localEntry, leadersEntry := rf.log[i], appendEntriesArgs.LogEntries[entriesIndex]
-				return localEntry.Index == leadersEntry.Index && localEntry.Term == leadersEntry.Term
-			}
-
-			// from i till the end needs to be deleted
-			if entriesIndex >= len(appendEntriesArgs.LogEntries) || !isConsistent() {
-				rf.log = rf.log[:i]
-				break
-			} else {
-				entriesIndex++
-			}
-		}
-
-		// There are additional log entries in leader that need to be added to peer
-		if entriesIndex < len(appendEntriesArgs.LogEntries) {
-			rf.log = append(rf.log, appendEntriesArgs.LogEntries[entriesIndex:]...)
-		}
-
-		// Update the commit index
-		if appendEntriesArgs.LeaderCommit > rf.commitIndex {
-			var latestLogIndex = -1
-
-			if len(rf.log) > 0 {
-				latestLogIndex = rf.log[len(rf.log)-1].Index
-			}
-
-			// This condition will be true if either follower or leader crashed
-			if appendEntriesArgs.LeaderCommit < latestLogIndex {
-				rf.commitIndex = appendEntriesArgs.LeaderCommit
-			} else {
-				rf.commitIndex = latestLogIndex
-			}
-		}
-		appendEntriesReply.Success = true
-	} else {
-
-		// It means peer's log is shorter than leader's log
-		if appendEntriesReply.ConflictEntry == 0 && len(rf.log) > 0 {
-			appendEntriesReply.ConflictEntry = rf.log[len(rf.log)-1].Term
-		}
-
-		// Iterate over peer's log to find starting conflict entry
-		for _, v := range rf.log {
-			if v.Term == appendEntriesReply.ConflictEntry {
-				appendEntriesReply.ConflictIndex = v.Index
-				break
-			}
-		}
-
-		appendEntriesReply.Success = false
-	}
 	rf.persist()
 }
 
@@ -211,7 +129,6 @@ func (rf *Raft) persist() {
 	gob.NewEncoder(buffer).Encode(
 		PersistentState{
 			CurrentTerm: rf.currentTerm,
-			Log:         rf.log,
 			VotedFor:    rf.votedFor,
 		})
 
@@ -228,7 +145,6 @@ func (rf *Raft) readPersist(input []byte) {
 	decoded.Decode(&persistentState)
 
 	rf.currentTerm = persistentState.CurrentTerm
-	rf.log = persistentState.Log
 	rf.votedFor = persistentState.VotedFor
 }
 
@@ -279,47 +195,19 @@ func (rf *Raft) setAsFollower(newTerm int) {
 func (rf *Raft) PrepareEntries(peerIndex int, sendAppendChan chan struct{}) {
 	rf.Lock()
 
-	var entries []LogEntry = []LogEntry{}
-	var prevLogIndex, prevLogTerm int = 0, 0
-
-	lastLogIndex, _ := rf.getLastEntryInfo()
-
-	if lastLogIndex > 0 && lastLogIndex >= rf.nextIndex[peerIndex] {
-		for i, v := range rf.log {
-			if v.Index == rf.nextIndex[peerIndex] {
-				if i > 0 {
-					prevLogIndex = rf.log[i-1].Index
-					prevLogTerm = rf.log[i-1].Term
-				}
-				// Peer is missing entries from i till the end
-				entries = make([]LogEntry, len(rf.log)-i)
-				copy(entries, rf.log[i:])
-				break
-			}
-		}
-	} else {
-		if len(rf.log) > 0 {
-			// Heartbeat will be sent only
-			prevLogIndex = rf.log[len(rf.log)-1].Index
-			prevLogTerm = rf.log[len(rf.log)-1].Term
-		}
-	}
 	rf.Unlock()
 
-	sendAppendEntries(rf, prevLogIndex, prevLogTerm, entries, peerIndex, sendAppendChan)
+	sendAppendEntries(rf, peerIndex, sendAppendChan)
 }
 
 //
 // Makes append entries call and updates matchIndex and nextIndex
 //
-func sendAppendEntries(rf *Raft, prevLogIndex int, prevLogTerm int, entries []LogEntry, peerIndex int, sendAppendChan chan struct{}) {
+func sendAppendEntries(rf *Raft, peerIndex int, sendAppendChan chan struct{}) {
 	appendEntriesReply := AppendEntriesReply{}
 	appendEntriesArgs := AppendEntriesArgs{
 		Term:             rf.currentTerm,
 		LeaderID:         rf.id,
-		PreviousLogIndex: prevLogIndex,
-		PreviousLogTerm:  prevLogTerm,
-		LogEntries:       entries,
 		LeaderCommit:     rf.commitIndex,
 	}
 
@@ -328,14 +216,7 @@ func sendAppendEntries(rf *Raft, prevLogIndex int, prevLogTerm int, entries []Lo
 	rf.Lock()
 	defer rf.Unlock()
 	// It means that there is a match in peer and leader for prevLogIndex and prevLogTerm
-	if ok && appendEntriesReply.Success && !(rf.state != Leader || rf.isInvalid || appendEntriesArgs.Term != rf.currentTerm) {
-		if len(entries) > 0 {
-			lastReplicated := entries[len(entries)-1]
-			rf.matchIndex[peerIndex] = lastReplicated.Index
-			rf.nextIndex[peerIndex] = lastReplicated.Index + 1
-			rf.updateCommitIndex()
-		}
-	} else {
+	if !(ok && appendEntriesReply.Success) || rf.state != Leader || rf.isInvalid || appendEntriesArgs.Term != rf.currentTerm {
 		// Peer is in higher term than leader
 		if appendEntriesReply.Term > rf.currentTerm {
 			rf.setAsFollower(appendEntriesReply.Term)
@@ -448,12 +329,9 @@ func (rf *Raft) startElection() {
 
 	requestsVotesReplies := make([]RequestVoteReply, len(rf.peers))
 	votesChannel := make(chan int, len(rf.peers))
-	lastIndex, lastTerm := rf.getLastEntryInfo()
 	requestVoteArgs := RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateID:  rf.id,
-		LastLogTerm:  lastTerm,
-		LastLogIndex: lastIndex,
 	}
 
 	for i := range rf.peers {
